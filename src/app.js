@@ -37,6 +37,21 @@ export function createApp() {
     // 每个请求懒初始化 store（Workers 每次 fetch 都新 env；Node 进程级缓存见下）
     const stores = { outbox: null, sub: null, proactive: null, kv: null };
     async function getStores(env) {
+        // ===== 强制使用内存存储（调试用，绕过 KV 配额限制）=====
+        if (env && env.RELAY_STORE === 'memory') {
+            console.log('🔥 FORCE using memory stores (RELAY_STORE=memory)');
+            // 直接用内存实现创建 store，不依赖 KV
+            const { MemoryOutboxStore } = await import('./store/memoryOutboxStore.js');
+            const { MemorySubStore } = await import('./store/subStore.js');
+            const { MemoryProactiveStore } = await import('./store/proactiveStore.js');
+            return {
+                outbox: new MemoryOutboxStore(),
+                sub: new MemorySubStore(),
+                proactive: new MemoryProactiveStore(),
+                kv: null, // 内存模式不需要 kv
+            };
+        }
+        // ===== 原有逻辑 =====
         if (env && env.OUTBOX) {
             // Workers：KV 绑定每次都现取，store 实例无状态可重建
             return {
