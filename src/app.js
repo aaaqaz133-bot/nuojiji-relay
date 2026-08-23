@@ -336,6 +336,65 @@ export function createApp() {
 
     // 注册/更新一对的全量配置（含手机端拼好的 promptTemplate）
     app.post('/proactive/register', async (c) => {
+          try {
+        let body;
+        try { body = await c.req.json(); } catch { return c.json({ error: 'invalid json' }, 400); }
+        const {
+            inboxId, userId, charId, promptTemplate, proactiveProfile, lifeState,
+            intensity, proactiveBias, recentMessages, aiSettings, quietHours,
+            charUtcOffsetSeconds, proactiveEnabledAt, lastInteractionAt, enabled,
+            mode, interval, intervalUnit, probability, timeSpec, mcpContextServers, avatarUrl, notifPrivacy,
+            mcpToolServers, mcpProactiveToolUse,
+        } = body || {};
+        if (!inboxId || userId == null || charId == null || !promptTemplate || !aiSettings) {
+            return c.json({ error: 'inboxId / userId / charId / promptTemplate / aiSettings required' }, 400);
+        }
+        // 保留原有的输入大小限制
+        if (typeof promptTemplate === 'string' && promptTemplate.length > 256 * 1024) {
+            return c.json({ error: 'promptTemplate too large (>256KB)' }, 413);
+        }
+        for (const [field, val] of [['mcpToolServers', mcpToolServers], ['mcpContextServers', mcpContextServers]]) {
+            if (val != null) {
+                if (Array.isArray(val) && val.length > 32) return c.json({ error: `${field} too many (>32)` }, 413);
+                let sz = 0; try { sz = JSON.stringify(val).length; } catch { /* ignore */ }
+                if (sz > 128 * 1024) return c.json({ error: `${field} too large (>128KB)` }, 413);
+            }
+        }
+        const { proactive } = await getStores(c.env);
+        await proactive.upsert({
+            inboxId, userId: String(userId), charId: String(charId),
+            mode: mode === 'interval' ? 'interval' : 'impulse',
+            interval: interval ?? 60, intervalUnit: intervalUnit || 'minutes', probability: probability || 'medium',
+            promptTemplate, proactiveProfile: proactiveProfile || null, lifeState: lifeState || {},
+            intensity: intensity || 'normal', proactiveBias: proactiveBias || 0,
+            recentMessages: Array.isArray(recentMessages) ? recentMessages.slice(-PROACTIVE_WINDOW_CAP) : [],
+            aiSettings, quietHours: quietHours || null,
+            charUtcOffsetSeconds: charUtcOffsetSeconds ?? null,
+            proactiveEnabledAt: proactiveEnabledAt || Date.now(),
+            lastInteractionAt: lastInteractionAt || 0,
+            enabled: enabled !== false,
+            timeSpec: timeSpec || null,
+            mcpContextServers: Array.isArray(mcpContextServers) ? mcpContextServers : [],
+            mcpToolServers: Array.isArray(mcpToolServers) ? mcpToolServers : [],
+            mcpProactiveToolUse: !!mcpProactiveToolUse,
+            avatarUrl: typeof avatarUrl === 'string' ? avatarUrl : null,
+            notifPrivacy: !!notifPrivacy,
+        });
+        return c.json({ ok: true });
+    } catch (e) {
+        // 👇 关键：返回详细错误信息
+        console.error('=== /proactive/register FATAL ===', e);
+        return c.json({
+            error: 'upsert failed',
+            detail: e.message,
+            stack: e.stack,
+            type: e.constructor.name,
+            // 额外信息帮助诊断
+            envHasOutbox: !!(c.env && c.env.OUTBOX),
+            envKeys: Object.keys(c.env || {}).slice(0, 10),
+        }, 500);
+    }
+}
         let body;
         try { body = await c.req.json(); } catch { return c.json({ error: 'invalid json' }, 400); }
         const {
