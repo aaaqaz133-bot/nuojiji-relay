@@ -335,7 +335,8 @@ export function createApp() {
     // ===== Phase 2：后端代理主动消息 =====
 
     // 注册/更新一对的全量配置（含手机端拼好的 promptTemplate）
-    app.post('/proactive/register', async (c) => {
+app.post('/proactive/register', async (c) => {
+    try {
         let body;
         try { body = await c.req.json(); } catch { return c.json({ error: 'invalid json' }, 400); }
         const {
@@ -361,8 +362,9 @@ export function createApp() {
                 if (sz > 128 * 1024) return c.json({ error: `${field} too large (>128KB)` }, 413);
             }
         }
-        const { proactive } = await getStores(c.env);
-        await proactive.upsert({
+
+        // 组装 rec 对象
+        const rec = {
             inboxId, userId: String(userId), charId: String(charId),
             mode: mode === 'interval' ? 'interval' : 'impulse',
             interval: interval ?? 60, intervalUnit: intervalUnit || 'minutes', probability: probability || 'medium',
@@ -374,16 +376,40 @@ export function createApp() {
             proactiveEnabledAt: proactiveEnabledAt || Date.now(),
             lastInteractionAt: lastInteractionAt || 0,
             enabled: enabled !== false,
-            timeSpec: timeSpec || null, // 🕒 时间穿透：tick 时用它把 §NOW_*§ 哨兵填成即时真时间
-            mcpContextServers: Array.isArray(mcpContextServers) ? mcpContextServers : [], // 🧠 第三方记忆 MCP 直连配置
-            // 🛠️ 主动用工具：action-mode MCP server 规格（含 cachedTools）+ 全局开关，tick 时跑 tool-loop。
+            timeSpec: timeSpec || null,
+            mcpContextServers: Array.isArray(mcpContextServers) ? mcpContextServers : [],
             mcpToolServers: Array.isArray(mcpToolServers) ? mcpToolServers : [],
             mcpProactiveToolUse: !!mcpProactiveToolUse,
-            avatarUrl: typeof avatarUrl === 'string' ? avatarUrl : null, // 🖼️ 角色头像公开 URL，推送时带给 iOS 通知扩展显示在左侧
-            notifPrivacy: !!notifPrivacy, // 🔒 通知隐私模式：推送时正文换「你有一条新消息」，标题/头像保留
-        });
+            avatarUrl: typeof avatarUrl === 'string' ? avatarUrl : null,
+            notifPrivacy: !!notifPrivacy,
+        };
+
+        // 提前序列化测试，排查 JSON 错误
+        let jsonTest;
+        try {
+            jsonTest = JSON.stringify(rec);
+        } catch (e) {
+            return c.json({
+                error: 'rec serialization failed',
+                detail: e.message,
+                keys: Object.keys(rec),
+            }, 500);
+        }
+
+        const { proactive } = await getStores(c.env);
+        await proactive.upsert(rec);
         return c.json({ ok: true });
-    });
+    } catch (e) {
+        console.error('=== /proactive/register ERROR ===', e);
+        return c.json({
+            error: 'upsert failed',
+            detail: e.message,
+            stack: e.stack,
+            type: e.constructor.name,
+            envHasOutbox: !!(c.env && c.env.OUTBOX),
+        }, 500);
+    }
+});
 
     // 🔒 即时刷新本 inbox 所有 pair 的通知隐私标志（用户切开关时调，无需重跑整个注册）。
     app.post('/proactive/privacy', async (c) => {
