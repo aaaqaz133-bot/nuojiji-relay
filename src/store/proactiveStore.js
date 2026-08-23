@@ -34,24 +34,9 @@ export function makePairKey(inboxId, userId, charId) {
 let _nodeSingleton = null;
 
 export async function createProactiveStore(env) {
-    if (env && env.OUTBOX && typeof env.OUTBOX.put === 'function') {
-        return new KvProactiveStore(env.OUTBOX);
-    }
-    if (_nodeSingleton) return _nodeSingleton;
-    const storeKind = (typeof process !== 'undefined' && process.env?.RELAY_STORE) || 'memory';
-    if (storeKind === 'sqlite') {
-        try {
-            // 计算式路径：阻止 esbuild/wrangler 把 sqlite store(及其 better-sqlite3 依赖)静态打进 Workers bundle。
-            // 该文件只在 Node + RELAY_STORE=sqlite 时才加载。
-            const mod = await import(/* @vite-ignore */ './sqliteProactiveStore' + '.js');
-            _nodeSingleton = new mod.SqliteProactiveStore(process.env.RELAY_SQLITE_PATH || './outbox.db');
-            return _nodeSingleton;
-        } catch (e) {
-            console.warn('[proactive] sqlite 不可用，回退内存:', e?.message);
-        }
-    }
-    _nodeSingleton = new MemoryProactiveStore();
-    return _nodeSingleton;
+    // 强制使用内存存储（调试用，绕过 KV 配额）
+    console.log('🔥 FORCE using MemoryProactiveStore (bypass KV)');
+    return new MemoryProactiveStore();
 }
 
 // ===== 内存实现（Node 默认）=====
